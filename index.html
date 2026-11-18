@@ -348,7 +348,7 @@ function vImport(){
     h+='</div>';
   }
   var t=ymd(new Date()),n=S.lessons.filter(function(l){return l.date>=t}).length;
-  h+='<h2>通知</h2><div class="card"><p>登録した授業をiPhoneのカレンダーに入れると、授業の'+S.before+'分前に行き先のクラス'+(S.after?'、終わりの時刻に「記録をつける」':'')+'の通知が出ます。</p><div class="btns"><button class="pri" data-act="ics"'+(n?'':' disabled')+'>今日からの'+n+'コマをカレンダーに入れる</button></div><p class="sub">時間割を登録し直したら、もう一度このボタンを押してください。同じコマは上書きされ、二重にはなりません。</p></div>';
+  h+='<h2>通知</h2><div class="card"><p>登録した授業をiPhoneのカレンダーに入れると、授業の'+S.before+'分前に行き先のクラス'+(S.after?'、終わりの時刻に「記録をつける」':'')+'の通知が出ます。</p><div class="btns"><button class="pri" data-act="ics"'+(n?'':' disabled')+'>今日からの'+n+'コマをカレンダーに入れる</button><button data-act="ics2"'+(n?'':' disabled')+'>共有メニューで渡す</button></div><p class="sub">追加の画面が出ないときは「共有メニューで渡す」からメールで自分に送り、届いた添付ファイルをタップしてください。</p><p class="sub">時間割を登録し直したら、もう一度このボタンを押してください。同じコマは上書きされ、二重にはなりません。</p></div>';
   return h;
 }
 function vSet(){
@@ -443,6 +443,15 @@ function deliver(name,mime,text){
   setTimeout(function(){URL.revokeObjectURL(a.href);a.remove()},4000);
 }
 
+function toCalendar(text){
+  var sw=navigator.serviceWorker;
+  if(!(sw&&sw.controller&&window.caches)){deliver('jugyo.ics','text/calendar',text);return}
+  var u=new URL('jugyo.ics',location.href).href;
+  caches.open('jugyo-ics').then(function(c){return c.put(u,new Response(text,{headers:{'Content-Type':'text/calendar; charset=utf-8'}}))})
+    .then(function(){location.href=u+'?t='+Date.now()})
+    .catch(function(){deliver('jugyo.ics','text/calendar',text)});
+}
+
 /* ---------- 記録の入力 ---------- */
 function openSheet(html){document.getElementById('sheetBody').innerHTML=html;document.getElementById('sheet').className='sheet open'}
 function closeSheet(){document.getElementById('sheet').className='sheet'}
@@ -488,7 +497,7 @@ document.addEventListener('click',function(e){
   else if(d.act==='close')closeSheet();
   else if(d.act==='add'){var t=ymd(new Date());editor({date:t,period:1,cls:'',content:'',absent:'',memo:''},true)}
   else if(d.act==='register'){register();render();window.scrollTo(0,0)}
-  else if(d.act==='ics'){var r=buildIcs();if(!r.n){flash='時刻の設定がない時限のため、入れられるコマがありません。';render()}else deliver('jugyo.ics','text/calendar',r.text)}
+  else if(d.act==='ics'||d.act==='ics2'){var r=buildIcs();if(!r.n){flash='時刻の設定がない時限のため、入れられるコマがありません。';render()}else if(d.act==='ics2')deliver('jugyo.ics','text/calendar',r.text);else toCalendar(r.text)}
   else if(d.act==='export')deliver('jugyo-kiroku-'+ymd(new Date())+'.json','application/json',JSON.stringify(S));
   else if(d.act==='importjson')document.getElementById('json').click();
   else if(d.act==='wipe'){if(confirmTap(b,'wipe','もう一度押すとすべて消えます')){S=JSON.parse(JSON.stringify(DEF));save();flash='すべて消しました。';render()}}
