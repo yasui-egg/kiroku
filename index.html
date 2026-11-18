@@ -343,6 +343,7 @@ function vImport(){
         if(e.date!==last){h+='<p class="sub" style="margin:10px 0 0">'+jp(e.date)+'</p>';last=e.date}
         h+='<label class="pick" style="margin:0"><input type="checkbox" data-pick="'+e.key+'"'+(pick.on[e.key]?' checked':'')+'><b>'+e.period+'時間目</b><span style="color:var(--ink);font-size:16px">'+esc(e.text)+'</span></label>';
       });
+      h+=planHtml(plan());
       h+='<p class="sub">チェックを外したコマは登録しません（総合・道徳などは最初から外してあります）。読み違いがないか、ここで一度見てください。</p><div class="btns"><button class="pri" data-act="register"'+(es.length?'':' disabled')+'>この週の授業として登録する</button></div>';
     }
     h+='</div>';
@@ -392,24 +393,53 @@ function readPdf(file){
       parsed=hit||out[0];
       pick.row=-1;parsed.teachers.forEach(function(t,i){if(t.name===S.teacher&&pick.row<0)pick.row=i});
       var t=ymd(new Date());pick.week=wdOf(t)>=5?addDays(monday(t),7):monday(t);
-      defaultPick();flash=pick.row>=0?'読み取りました。内容を確かめて登録してください。':'読み取りました。先生の名前を選んでください。';render();
+      pick.force=false;defaultPick();flash=pick.row>=0?'読み取りました。内容を確かめて登録してください。':'読み取りました。先生の名前を選んでください。';render();
     }).catch(function(){parsed=null;flash='PDFを読み取れませんでした。';render()});
   };
   fr.readAsArrayBuffer(file);
 }
-function register(){
-  var es=entries().filter(function(e){return pick.on[e.key]}),ids={},add=0,keep=0;
-  if(!es.length){flash='登録するコマがありません。';return}
-  var dates=es.map(function(e){return e.date}).sort(),w0=monday(dates[0]),w1=addDays(monday(dates[dates.length-1]),6);
+function fixed(l){return !!(l.done||(isPast(l)&&hasRec(l)))}
+function slot(l){return jp(l.date)+' '+l.period+'限 '}
+// 登録すると何が変わるかを先に調べる。授業の記録があるコマには触らない。
+function plan(){
+  var es=entries().filter(function(e){return pick.on[e.key]}),ids={},P={es:es,add:[],chg:[],del:[],ask:[],kept:0};
+  if(!es.length)return P;
+  var dates=es.map(function(e){return e.date}).sort();P.w0=monday(dates[0]);P.w1=addDays(monday(dates[dates.length-1]),6);
   es.forEach(function(e){
-    var id=e.date+'_'+e.period;ids[id]=1;var l=find(id);
-    if(!l){S.lessons.push({id:id,date:e.date,period:e.period,cls:e.text,content:'',absent:'',memo:'',done:false});add++}
-    else if(l.cls!==e.text){if(hasRec(l))keep++;else l.cls=e.text}
+    var id=e.date+'_'+e.period,l=find(id);ids[id]=1;
+    if(!l)P.add.push(e);
+    else if(l.cls!==e.text){if(fixed(l))P.kept++;else if(hasRec(l))P.ask.push({l:l,to:e.text});else P.chg.push({l:l,to:e.text})}
   });
-  var before=S.lessons.length;
-  S.lessons=S.lessons.filter(function(l){return ids[l.id]||l.date<w0||l.date>w1||hasRec(l)||l.manual});
-  S.teacher=parsed.teachers[pick.row].name;save();
-  flash=jp(w0)+'の週に'+es.length+'コマを登録しました（新規'+add+'、入れ替えで削除'+(before-S.lessons.length)+'）。'+(keep?'記録のある'+keep+'コマは元のまま残しました。':'')+'下のボタンでカレンダーに入れると通知が出ます。';
+  S.lessons.forEach(function(l){
+    if(ids[l.id]||l.date<P.w0||l.date>P.w1||l.manual)return;
+    if(fixed(l))P.kept++;else if(hasRec(l))P.ask.push({l:l,to:null});else P.del.push(l);
+  });
+  return P;
+}
+function planHtml(P){
+  if(!(P.chg.length||P.del.length||P.ask.length||P.kept))return '';
+  var h='<h2>登録すると変わるところ</h2><p class="sub">新しく入る '+P.add.length+'コマ／クラスが変わる '+P.chg.length+'コマ／なくなる '+P.del.length+'コマ</p>';
+  P.chg.forEach(function(c){h+='<p style="margin:4px 0">'+slot(c.l)+esc(c.l.cls)+' → <b>'+esc(c.to)+'</b></p>'});
+  P.del.forEach(function(l){h+='<p style="margin:4px 0">'+slot(l)+esc(l.cls)+' → <b>なくなる</b></p>'});
+  if(P.ask.length){
+    h+='<p class="sub" style="margin-top:12px">予定メモを書いてあるコマ（'+P.ask.length+'）は、そのまま残します。</p>';
+    P.ask.forEach(function(c){h+='<p style="margin:4px 0">'+slot(c.l)+esc(c.l.cls)+'（新しい時間割では'+(c.to?esc(c.to):'なし')+'）</p>'});
+    h+='<label class="pick" style="margin:0"><input type="checkbox" id="force"'+(pick.force?' checked':'')+'><span style="color:var(--ink);font-size:16px">これらも新しい時間割に合わせる（予定メモは消えます）</span></label>';
+  }
+  if(P.kept)h+='<p class="sub" style="margin-top:12px">授業の記録があるコマ（'+P.kept+'）は、時間割が変わっていてもそのまま残します。</p>';
+  return h;
+}
+function register(){
+  var P=plan(),gone={},n=0;
+  if(!P.es.length){flash='登録するコマがありません。';return}
+  P.add.forEach(function(e){S.lessons.push({id:e.date+'_'+e.period,date:e.date,period:e.period,cls:e.text,content:'',absent:'',memo:'',done:false})});
+  P.chg.forEach(function(c){c.l.cls=c.to});
+  P.del.forEach(function(l){gone[l.id]=1;n++});
+  if(pick.force)P.ask.forEach(function(c){if(c.to){c.l.cls=c.to;c.l.content='';c.l.absent='';c.l.memo='';delete c.l.manual}else{gone[c.l.id]=1;n++}});
+  S.lessons=S.lessons.filter(function(l){return !gone[l.id]});
+  var left=pick.force?0:P.ask.length;
+  S.teacher=parsed.teachers[pick.row].name;pick.force=false;save();
+  flash=jp(P.w0)+'の週を登録しました（新しく'+P.add.length+'、変更'+(P.chg.length+(left?0:P.ask.filter(function(c){return c.to}).length))+'、削除'+n+'）。'+(left?'予定メモのある'+left+'コマは元のまま残しました。':'')+(P.kept?'記録のある'+P.kept+'コマは元のまま残しました。':'')+'下のボタンでカレンダーに入れると通知が出ます。';
 }
 
 /* ---------- カレンダー（通知） ---------- */
@@ -505,9 +535,10 @@ document.addEventListener('click',function(e){
 document.addEventListener('change',function(e){
   var t=e.target;
   if(t.id==='pdf'&&t.files[0])readPdf(t.files[0]);
-  else if(t.id==='selT'){pick.row=+t.value;defaultPick();render()}
+  else if(t.id==='selT'){pick.row=+t.value;pick.force=false;defaultPick();render()}
   else if(t.id==='selW'){pick.week=t.value;render()}
-  else if(t.dataset.pick)pick.on[t.dataset.pick]=t.checked;
+  else if(t.dataset.pick){pick.on[t.dataset.pick]=t.checked;render()}
+  else if(t.id==='force')pick.force=t.checked;
   else if(t.dataset.pt){var a=t.dataset.pt.split(',');if(t.value){S.periods[+a[0]][+a[1]]=t.value;save()}}
   else if(t.id==='setBefore'){S.before=+t.value;save()}
   else if(t.id==='setAfter'){S.after=t.checked;save()}
