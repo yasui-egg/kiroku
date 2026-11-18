@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
 <meta charset="utf-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; connect-src 'none'; worker-src 'self'; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' 'self'; child-src 'self'; style-src 'unsafe-inline'; img-src data: blob:; connect-src 'none'; worker-src 'self'; base-uri 'none'; form-action 'none'">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
@@ -245,7 +245,7 @@ var DEF={teacher:'',before:10,after:true,
   periods:[['08:50','09:40'],['09:50','10:40'],['10:50','11:40'],['11:50','12:40'],['13:40','14:30'],['14:40','15:30'],['15:40','16:30']],
   lessons:[]};
 var SKIP=['総合','道徳','学活','運営','初任研','生指推','研究','進路','学年','会議'];
-var S=load(), tab='today', curClass='', parsed=null, pick={row:-1,week:'',on:{}}, flash='';
+var S=load(), tab='today', curClass='', parsed=null, pick={row:-1,week:'',on:{}}, flash='', swMsg='確認しています…';
 
 function clean(o){
   if(!o||typeof o!=='object')return null;
@@ -356,6 +356,7 @@ function vSet(){
   S.periods.forEach(function(p,i){h+='<div class="grid3"><b>'+(i+1)+'限</b><input type="time" data-pt="'+i+',0" value="'+p[0]+'"><input type="time" data-pt="'+i+',1" value="'+p[1]+'"></div>'});
   h+='<p class="sub">学校の時程に合わせて直してください。通知の時刻はここから決まります。</p></div>';
   h+='<h2>通知</h2><div class="card"><label>授業の何分前に知らせるか</label><select id="setBefore">'+[3,5,10,15,20].map(function(m){return '<option'+(m===S.before?' selected':'')+'>'+m+'</option>'}).join('')+'</select><label class="pick" style="border:0"><input type="checkbox" id="setAfter"'+(S.after?' checked':'')+'><span style="color:var(--ink);font-size:16px">授業が終わったら「記録をつける」と知らせる</span></label></div>';
+  h+='<h2>オフライン起動</h2><div class="card"><p>'+esc(swMsg)+'</p><p class="sub">「準備できています」と出ていれば、電波がなくてもアイコンから開けます。</p></div>';
   h+='<h2>バックアップ</h2><div class="card"><p class="sub">記録はこの端末の中だけにあります。機種変更の前や学期末に書き出してください。</p><div class="btns"><button data-act="export">記録を書き出す</button><button data-act="importjson">書き出したファイルを読み込む</button></div><input type="file" id="json" accept="application/json,.json" style="display:none"><div class="btns"><button class="danger" data-act="wipe">すべての記録を消す</button></div></div>';
   return h;
 }
@@ -505,7 +506,18 @@ document.addEventListener('change',function(e){
 });
 document.addEventListener('visibilitychange',function(){if(!document.hidden&&tab==='today'&&document.getElementById('sheet').className==='sheet')render()});
 setInterval(function(){if(tab==='today'&&!document.hidden&&document.getElementById('sheet').className==='sheet')render()},60000);
-if('serviceWorker' in navigator&&location.protocol==='https:')navigator.serviceWorker.register('sw.js').catch(function(){});
+function swSet(m){if(swMsg!==m){swMsg=m;if(tab==='set'&&!document.querySelector('#view :focus'))render()}}
+function swCheck(){
+  if(!('serviceWorker' in navigator)){swSet('できていません（この開き方では使えない機能です）');return}
+  if(location.protocol!=='https:'&&location.hostname!=='127.0.0.1'&&location.hostname!=='localhost'){swSet('できていません（https で開いていません）');return}
+  navigator.serviceWorker.register('sw.js').then(function(){return navigator.serviceWorker.ready}).then(function(){return caches.keys()}).then(function(ks){
+    var v=ks.filter(function(k){return k.indexOf('jugyo-')===0}).join(', ');
+    if(!v)swSet('できていません（端末内のコピーがまだありません）');
+    else if(!navigator.serviceWorker.controller)swSet('準備中です。アプリを一度完全に閉じて、開き直してください（'+v+'）');
+    else swSet('準備できています（'+v+'）');
+  }).catch(function(e){swSet('できていません（'+(e&&e.name||'')+': '+(e&&e.message||e)+'）')});
+}
+swCheck();
 render();
 })();
 </script>
