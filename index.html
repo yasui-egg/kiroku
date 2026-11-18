@@ -63,12 +63,19 @@ nav button.on{color:var(--acc);font-weight:700}
 .hist div{white-space:pre-wrap}
 table{width:100%;border-collapse:collapse;font-size:14px}
 td,th{border-bottom:1px solid var(--line);padding:7px 4px;text-align:left}
+.swipe{position:relative;margin:6px 0;border-radius:12px;overflow:hidden;background:var(--chip);touch-action:pan-y}
+.swipe .row{margin:0;position:relative;transition:transform .15s}
+.swipe .row .p{font-size:14px}
+.swipe .hint{position:absolute;top:0;bottom:0;display:flex;align-items:center;font-size:13px;font-weight:700;padding:0 14px}
+.swipe .hint.l{left:0;color:var(--ok)}.swipe .hint.r{right:0;color:var(--warn)}
+.msg button{min-height:32px;padding:2px 12px;margin-left:8px}
 </style>
 </head>
 <body>
 <main id="view"></main>
 <nav id="nav">
   <button data-tab="today">今日</button>
+  <button data-tab="task">やること</button>
   <button data-tab="class">クラス別</button>
   <button data-tab="import">時間割</button>
   <button data-tab="set">設定</button>
@@ -243,9 +250,10 @@ if (typeof module !== 'undefined') module.exports = { parseTimetable: parseTimet
 var KEY='jugyo-kiroku-v1', WD='月火水木金土日';
 var DEF={teacher:'',before:10,after:true,
   periods:[['08:50','09:40'],['09:50','10:40'],['10:50','11:40'],['11:50','12:40'],['13:40','14:30'],['14:40','15:30'],['15:40','16:30']],
-  lessons:[]};
+  lessons:[],tasks:[]};
+var REP={none:'くり返さない',weekly:'毎週',monthly:'毎月'},REM=[0,1,3,7,14];
 var SKIP=['総合','道徳','学活','運営','初任研','生指推','研究','進路','学年','会議'];
-var S=load(), tab='today', curClass='', parsed=null, pick={row:-1,week:'',on:{}}, flash='', swMsg='確認しています…';
+var S=load(), tab='today', curClass='', parsed=null, pick={row:-1,week:'',on:{}}, flash='', swMsg='確認しています…', undo=null, undoShow=false, sw=null, swiped=0;
 
 function clean(o){
   if(!o||typeof o!=='object')return null;
@@ -263,6 +271,13 @@ function clean(o){
     var x={id:id,date:l.date,period:p,cls:str(l.cls),content:str(l.content),absent:str(l.absent),memo:str(l.memo),done:l.done===true};
     if(l.manual===true)x.manual=true;
     r.lessons.push(x);
+  });
+  var tid={};
+  (Array.isArray(o.tasks)?o.tasks:[]).forEach(function(t,i){
+    if(!t||typeof t!=='object'||!isD(t.due)||!str(t.title))return;
+    var id=typeof t.id==='string'&&/^t\d{1,20}$/.test(t.id)&&!tid[t.id]?t.id:'t'+(Date.now()*1000+i);tid[id]=1;
+    var dom=t.dom;if(typeof dom!=='number'||!(dom>=1&&dom<=31)||dom!==Math.floor(dom))dom=+t.due.slice(8);
+    r.tasks.push({id:id,title:str(t.title),due:t.due,repeat:REP.hasOwnProperty(t.repeat)?t.repeat:'none',remind:REM.indexOf(t.remind)>=0?t.remind:0,dom:dom,memo:str(t.memo),cal:t.cal===true,done:t.done===true,doneOn:isD(t.doneOn)?t.doneOn:''});
   });
   return r;
 }
@@ -289,8 +304,8 @@ function prevOf(l){var r=null;S.lessons.forEach(function(x){if(x.cls===l.cls&&x.
 function render(){
   var v=document.getElementById('view');
   [].forEach.call(document.querySelectorAll('#nav button'),function(b){b.className=b.dataset.tab===tab?'on':''});
-  var h=flash?'<div class="msg">'+esc(flash)+'</div>':'';flash='';
-  v.innerHTML=h+({today:vToday,'class':vClass,'import':vImport,set:vSet}[tab])();
+  var h=flash?'<div class="msg">'+esc(flash)+(undoShow&&undo?'<button data-act="undo">元に戻す</button>':'')+'</div>':'';flash='';undoShow=false;
+  v.innerHTML=h+({today:vToday,task:vTask,'class':vClass,'import':vImport,set:vSet}[tab])();
 }
 function rowHtml(l,showDate){
   var p=ptime(l.period),st=l.done?'<span class="tag done">記録済</span>':(isPast(l)?'<span class="tag todo">未記録</span>':(l.content?'<span class="tag">予定メモ</span>':''));
@@ -300,11 +315,12 @@ function vToday(){
   var t=ymd(new Date()),now=hm(),d=new Date();
   var today=S.lessons.filter(function(l){return l.date===t}).sort(byTime);
   var h='<h1>'+(d.getMonth()+1)+'月'+d.getDate()+'日（'+WD[wdOf(t)]+'）</h1>';
-  if(!S.lessons.length)return h+'<div class="card"><p>まだ授業が登録されていません。</p><p class="sub">「時間割」タブで時間割PDFを読み込むと、その週の授業がここに並びます。</p></div>';
+  if(!S.lessons.length)return h+'<div class="card"><p>まだ授業が登録されていません。</p><p class="sub">「時間割」タブで時間割PDFを読み込むと、その週の授業がここに並びます。</p></div>'+hotHtml();
   var nx=today.filter(function(l){var p=ptime(l.period);return !p||p[1]>now})[0];
   if(nx){var p=ptime(nx.period),going=p&&p[0]<=now;
     h+='<div class="card next"><div class="sub">'+(going?'いまの授業':'次の授業')+'</div><div class="cls">'+esc(nx.cls)+'</div><div>'+nx.period+'時間目'+(p?'　'+p[0]+'〜'+p[1]:'')+'</div>'+(nx.content?'<div class="prev">'+esc(nx.content)+'</div>':'')+'<div class="btns"><button data-open="'+esc(nx.id)+'">'+(nx.content?'メモを見る・直す':'内容を事前にメモする')+'</button></div></div>';
   }else h+='<div class="card"><b>'+(today.length?'今日の授業は終わりました。':'今日は授業がありません。')+'</b></div>';
+  h+=hotHtml();
   var todo=S.lessons.filter(function(l){return !l.done&&isPast(l)}).sort(byTime).reverse();
   if(todo.length)h+='<h2>未記録の授業（'+todo.length+'）</h2>'+todo.slice(0,30).map(function(l){return rowHtml(l,true)}).join('');
   if(today.length)h+='<h2>今日の授業</h2>'+today.map(function(l){return rowHtml(l)}).join('');
@@ -348,8 +364,8 @@ function vImport(){
     }
     h+='</div>';
   }
-  var t=ymd(new Date()),n=S.lessons.filter(function(l){return l.date>=t}).length;
-  h+='<h2>通知</h2><div class="card"><p>登録した授業をiPhoneのカレンダーに入れると、授業の'+S.before+'分前に行き先のクラス'+(S.after?'、終わりの時刻に「記録をつける」':'')+'の通知が出ます。</p><div class="btns"><button class="pri" data-act="ics"'+(n?'':' disabled')+'>今日からの'+n+'コマをカレンダーに入れる</button><button data-act="ics2"'+(n?'':' disabled')+'>共有メニューで渡す</button></div><p class="sub">追加の画面が出ないときは「共有メニューで渡す」からメールで自分に送り、届いた添付ファイルをタップしてください。</p><p class="sub">時間割を登録し直したら、もう一度このボタンを押してください。同じコマは上書きされ、二重にはなりません。</p></div>';
+  var t=ymd(new Date()),n=S.lessons.filter(function(l){return l.date>=t}).length,tn=S.tasks.filter(function(x){return x.cal&&!x.done}).length;
+  h+='<h2>通知</h2><div class="card"><p>登録した授業をiPhoneのカレンダーに入れると、授業の'+S.before+'分前に行き先のクラス'+(S.after?'、終わりの時刻に「記録をつける」':'')+'の通知が出ます。</p><div class="btns"><button class="pri" data-act="ics"'+(n||tn?'':' disabled')+'>今日からの'+n+'コマ'+(tn?'と、やること'+tn+'件':'')+'をカレンダーに入れる</button><button data-act="ics2"'+(n||tn?'':' disabled')+'>共有メニューで渡す</button></div><p class="sub">追加の画面が出ないときは「共有メニューで渡す」からメールで自分に送り、届いた添付ファイルをタップしてください。</p><p class="sub">時間割を登録し直したら、もう一度このボタンを押してください。同じコマは上書きされ、二重にはなりません。</p></div>';
   return h;
 }
 function vSet(){
@@ -462,6 +478,15 @@ function buildIcs(){
       L.push('BEGIN:VALARM','ACTION:DISPLAY',fold('DESCRIPTION:'+icsEsc('記録をつける '+l.cls)),'TRIGGER:PT0S','END:VALARM','END:VEVENT');
     }
   });
+  S.tasks.filter(function(t){return t.cal&&!t.done}).forEach(function(t){
+    var hh=9-(t.remind||0)*24;n++;
+    L.push('BEGIN:VEVENT','UID:'+t.id+'@jugyo-kiroku','DTSTAMP:'+stamp,'DTSTART;VALUE=DATE:'+t.due.replace(/-/g,''),'DTEND;VALUE=DATE:'+addDays(t.due,1).replace(/-/g,''),fold('SUMMARY:'+icsEsc('期限 '+t.title)));
+    if(t.repeat==='weekly')L.push('RRULE:FREQ=WEEKLY');
+    else if(t.repeat==='monthly')L.push('RRULE:FREQ=MONTHLY;BYMONTHDAY='+(t.dom||+t.due.slice(8)));
+    if(t.memo)L.push(fold('DESCRIPTION:'+icsEsc(t.memo)));
+    if(t.remind)L.push('BEGIN:VALARM','ACTION:DISPLAY',fold('DESCRIPTION:'+icsEsc(t.title+'（期限の'+t.remind+'日前）')),'TRIGGER:-PT'+(-hh)+'H','END:VALARM');
+    L.push('BEGIN:VALARM','ACTION:DISPLAY',fold('DESCRIPTION:'+icsEsc(t.title+'（今日が期限）')),'TRIGGER:PT9H','END:VALARM','END:VEVENT');
+  });
   L.push('END:VCALENDAR');return{text:L.join('\r\n')+'\r\n',n:n};
 }
 function deliver(name,mime,text){
@@ -481,6 +506,94 @@ function toCalendar(text){
     .then(function(){location.href=u+'?t='+Date.now()})
     .catch(function(){deliver('jugyo.ics','text/calendar',text)});
 }
+
+/* ---------- やること ---------- */
+function today(){return ymd(new Date())}
+function diffDays(a,b){return Math.round((toDate(a)-toDate(b))/864e5)}
+function findTask(id){for(var i=0;i<S.tasks.length;i++)if(S.tasks[i].id===id)return S.tasks[i];return null}
+function byDue(a,b){return a.due<b.due?-1:a.due>b.due?1:0}
+function tHot(t){return !t.done&&today()>=addDays(t.due,-(t.remind||0))}
+function nextDue(t){
+  var d=t.due,now=today(),g=0;
+  do{
+    if(t.repeat==='weekly')d=addDays(d,7);
+    else{var a=toDate(d),y=a.getFullYear(),m=a.getMonth()+1;if(m>11){m=0;y++}d=y+'-'+pad(m+1)+'-'+pad(Math.min(t.dom||a.getDate(),new Date(y,m+1,0).getDate()))}
+  }while(d<=now&&++g<600);
+  return d;
+}
+function taskRow(t){
+  var n=diffDays(t.due,today()),d=toDate(t.due);
+  var tag=t.done?'<span class="tag done">済</span>':(n<0?'<span class="tag todo">期限切れ</span>':(n===0?'<span class="tag todo">今日まで</span>':''));
+  var sub=t.done?'完了'+(t.doneOn?' '+jp(t.doneOn):''):(n<0?(-n)+'日すぎています':n===0?'今日が期限':'あと'+n+'日')+(t.repeat!=='none'?'・'+REP[t.repeat]:'')+(t.memo?'・'+t.memo:'');
+  return '<div class="swipe" data-task="'+esc(t.id)+'"><span class="hint l">'+(t.done?'':'完了')+'</span><span class="hint r">消す</span><button class="row" data-topen="'+esc(t.id)+'"><span class="p">'+(d.getMonth()+1)+'/'+d.getDate()+'<small>'+WD[wdOf(t.due)]+'</small></span><span class="b"><b>'+esc(t.title)+'</b><span>'+esc(sub)+'</span></span>'+tag+'</button></div>';
+}
+function hotHtml(){var hot=S.tasks.filter(tHot).sort(byDue);return hot.length?'<h2>やること（'+hot.length+'）</h2>'+hot.map(taskRow).join(''):''}
+function vTask(){
+  var ts=S.tasks.filter(function(t){return !t.done}).sort(byDue),hot=ts.filter(tHot),later=ts.filter(function(t){return !tHot(t)});
+  var done=S.tasks.filter(function(t){return t.done}).sort(function(a,b){return a.doneOn<b.doneOn?1:a.doneOn>b.doneOn?-1:0});
+  var h='<h1>やること</h1><p class="sub">右へスワイプで完了、左へスワイプで消します。押すと中身を直せます。</p><div class="btns"><button class="pri" data-act="addtask">やることを追加する</button></div>';
+  if(!S.tasks.length)return h+'<div class="card"><p>まだ何もありません。</p><p class="sub">例：「部活動の予定を出す」を毎月20日に。出し始める日を決めておくと、その日から「今日」の画面にも並びます。</p></div>';
+  if(hot.length)h+='<h2>そろそろ・期限切れ（'+hot.length+'）</h2>'+hot.map(taskRow).join('');
+  if(later.length)h+='<h2>このあと</h2>'+later.map(taskRow).join('');
+  if(done.length)h+='<h2>終わったもの</h2>'+done.slice(0,30).map(taskRow).join('')+'<div class="btns"><button class="danger" data-act="cleartasks">終わったものをすべて消す</button></div>';
+  return h;
+}
+function taskEditor(t,isNew){
+  var id=esc(t.id||''),h='<h1 style="font-size:20px">'+(isNew?'やることを追加':'やることを直す')+'</h1>';
+  h+='<label>やること</label><input id="tTitle" value="'+esc(t.title)+'" placeholder="例：部活動の予定を出す">';
+  h+='<div class="grid2"><div><label>期限</label><input type="date" id="tDue" value="'+esc(t.due)+'"></div><div><label>くり返し</label><select id="tRep">'+Object.keys(REP).map(function(k){return '<option value="'+k+'"'+(k===t.repeat?' selected':'')+'>'+REP[k]+'</option>'}).join('')+'</select></div></div>';
+  h+='<label>「今日」の画面に出し始める日</label><select id="tRem">'+REM.map(function(n){return '<option value="'+n+'"'+(n===t.remind?' selected':'')+'>'+(n?n+'日前から':'当日だけ')+'</option>'}).join('')+'</select>';
+  h+='<label>メモ</label><textarea id="tMemo" style="min-height:64px">'+esc(t.memo)+'</textarea>';
+  h+='<label class="pick" style="border:0"><input type="checkbox" id="tCal"'+(t.cal?' checked':'')+'><span style="color:var(--ink);font-size:16px">iPhoneのカレンダーにも入れる（アプリを閉じていても通知が出ます）</span></label>';
+  h+='<p class="sub">「毎月」は期限の日にちをくり返します（20日なら毎月20日）。完了にすると次の回に進みます。カレンダーに入れる場合は、保存のあと「時間割」タブのボタンを押してください。</p>';
+  h+='<div class="btns"><button class="pri" data-tsave="1">保存する</button></div>';
+  h+='<div class="btns"><button data-act="close">閉じる</button>'+(isNew?'':(t.done?'<button data-tundo="'+id+'">未完了に戻す</button>':'<button data-tdone="'+id+'">完了にする</button>')+'<button class="danger" data-tdel="'+id+'">消す</button>')+'</div>';
+  openSheet(h);document.getElementById('sheetBody').dataset.id=isNew?'':t.id;
+}
+function saveTask(){
+  var id=document.getElementById('sheetBody').dataset.id,g=function(i){return document.getElementById(i).value.trim()};
+  var title=g('tTitle'),due=g('tDue');
+  if(!title||!/^\d{4}-\d{2}-\d{2}$/.test(due)){flash='やることと期限を入れてください。';closeSheet();render();return}
+  var t=id?findTask(id):null;
+  if(!t){t={id:'t'+(Date.now()*1000+Math.floor(Math.random()*1000)),done:false,doneOn:''};S.tasks.push(t)}
+  t.title=title;t.due=due;t.dom=+due.slice(8);t.repeat=REP.hasOwnProperty(g('tRep'))?g('tRep'):'none';t.remind=+g('tRem')||0;t.memo=g('tMemo');t.cal=document.getElementById('tCal').checked;
+  if(save())flash='保存しました。';
+  closeSheet();render();
+}
+function keepUndo(){undo=JSON.stringify(S.tasks);undoShow=true}
+function doneTask(t){
+  keepUndo();
+  if(t.repeat!=='none'){t.due=nextDue(t);flash='完了にしました。次は '+jp(t.due)+' です。'}
+  else{t.done=true;t.doneOn=today();flash='完了にしました。'}
+  save();
+}
+function delTask(id){keepUndo();S.tasks=S.tasks.filter(function(t){return t.id!==id});flash='消しました。';save()}
+function swReset(s){s.row.style.transition='';s.row.style.transform=''}
+document.addEventListener('touchstart',function(e){
+  var el=e.target.closest('.swipe');
+  if(!el||e.touches.length!==1){sw=null;return}
+  sw={el:el,row:el.querySelector('.row'),x:e.touches[0].clientX,y:e.touches[0].clientY,dx:0,on:false};
+},{passive:true});
+document.addEventListener('touchmove',function(e){
+  if(!sw)return;
+  var dx=e.touches[0].clientX-sw.x,dy=e.touches[0].clientY-sw.y;
+  if(!sw.on){
+    if(Math.abs(dy)>12&&Math.abs(dy)>Math.abs(dx)){sw=null;return}
+    if(Math.abs(dx)<12)return;
+    sw.on=true;sw.row.style.transition='none';
+  }
+  var t=findTask(sw.el.dataset.task);if(t&&t.done&&dx>0)dx=0;
+  sw.dx=dx;sw.row.style.transform='translateX('+dx+'px)';
+},{passive:true});
+document.addEventListener('touchend',function(){
+  if(!sw)return;var s=sw;sw=null;if(!s.on)return;
+  swiped=Date.now();
+  var id=s.el.dataset.task,t=findTask(id);
+  if(s.dx<-90&&t){delTask(id);render()}
+  else if(s.dx>90&&t&&!t.done){doneTask(t);render()}
+  else swReset(s);
+});
+document.addEventListener('touchcancel',function(){if(sw&&sw.on)swReset(sw);sw=null});
 
 /* ---------- 記録の入力 ---------- */
 function openSheet(html){document.getElementById('sheetBody').innerHTML=html;document.getElementById('sheet').className='sheet open'}
@@ -515,10 +628,19 @@ function confirmTap(btn,key,label){if(armed===key){armed='';return true}armed=ke
 
 /* ---------- 操作 ---------- */
 document.addEventListener('click',function(e){
-  var b=e.target.closest('[data-tab],[data-open],[data-act],[data-cls],[data-save],[data-del]');
+  var b=e.target.closest('[data-tab],[data-open],[data-act],[data-cls],[data-save],[data-del],[data-topen],[data-tsave],[data-tdel],[data-tdone],[data-tundo]');
   if(e.target.id==='sheet'){closeSheet();return}
   if(!b)return;
-  var d=b.dataset;
+  if(Date.now()-swiped<400)return;
+  var d=b.dataset,tk;
+  if(d.topen){tk=findTask(d.topen);if(tk)taskEditor(tk,false);return}
+  if(d.tsave){saveTask();return}
+  if(d.tdel){delTask(d.tdel);closeSheet();render();return}
+  if(d.tdone){tk=findTask(d.tdone);if(tk)doneTask(tk);closeSheet();render();return}
+  if(d.tundo){tk=findTask(d.tundo);if(tk){tk.done=false;tk.doneOn='';save();flash='未完了に戻しました。'}closeSheet();render();return}
+  if(d.act==='addtask'){taskEditor({title:'',due:today(),repeat:'none',remind:3,memo:'',cal:false},true);return}
+  if(d.act==='undo'){if(undo){try{S.tasks=JSON.parse(undo)}catch(x){}undo=null;save();flash='元に戻しました。'}render();return}
+  if(d.act==='cleartasks'){if(confirmTap(b,'cleartasks','もう一度押すと消えます')){keepUndo();S.tasks=S.tasks.filter(function(t){return !t.done});save();flash='終わったものを消しました。';render()}return}
   if(d.tab){tab=d.tab;render();window.scrollTo(0,0)}
   else if(d.open){var l=find(d.open);if(l)editor(l,false)}
   else if(d.cls){curClass=d.cls;render()}
