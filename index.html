@@ -320,10 +320,8 @@ function vToday(){
   if(nx){var p=ptime(nx.period),going=p&&p[0]<=now;
     h+='<div class="card next"><div class="sub">'+(going?'いまの授業':'次の授業')+'</div><div class="cls">'+esc(nx.cls)+'</div><div>'+nx.period+'時間目'+(p?'　'+p[0]+'〜'+p[1]:'')+'</div>'+(nx.content?'<div class="prev">'+esc(nx.content)+'</div>':'')+'<div class="btns"><button data-open="'+esc(nx.id)+'">'+(nx.content?'メモを見る・直す':'内容を事前にメモする')+'</button></div></div>';
   }else h+='<div class="card"><b>'+(today.length?'今日の授業は終わりました。':'今日は授業がありません。')+'</b></div>';
-  h+=hotHtml();
-  var todo=S.lessons.filter(function(l){return !l.done&&isPast(l)}).sort(byTime).reverse();
-  if(todo.length)h+='<h2>未記録の授業（'+todo.length+'）</h2>'+todo.slice(0,30).map(function(l){return rowHtml(l,true)}).join('');
   if(today.length)h+='<h2>今日の授業</h2>'+today.map(function(l){return rowHtml(l)}).join('');
+  h+=hotHtml();
   var fut=S.lessons.filter(function(l){return l.date>t}).sort(byTime).slice(0,40),last='';
   if(fut.length){h+='<h2>このあとの予定</h2>';fut.forEach(function(l){if(l.date!==last){h+='<p class="sub" style="margin-top:12px">'+jp(l.date)+'</p>';last=l.date}h+=rowHtml(l)})}
   return h+'<div class="btns"><button data-act="add">授業を手で追加する</button></div>';
