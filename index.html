@@ -247,13 +247,13 @@ if (typeof module !== 'undefined') module.exports = { parseTimetable: parseTimet
 <script>
 (function(){
 'use strict';
-var VER='2026-11-19a', KEY='jugyo-kiroku-v1', WD='月火水木金土日';
+var VER='2026-11-19c', KEY='jugyo-kiroku-v1', WD='月火水木金土日';
 var DEF={teacher:'',before:10,after:true,
   periods:[['08:50','09:40'],['09:50','10:40'],['10:50','11:40'],['11:50','12:40'],['13:40','14:30'],['14:40','15:30'],['15:40','16:30']],
   lessons:[],tasks:[]};
 var REP={none:'くり返さない',weekly:'毎週',monthly:'毎月'},REM=[0,1,3,7,14];
 var SKIP=['総合','道徳','学活','運営','初任研','生指推','研究','進路','学年','会議'];
-var S=load(), tab='today', curClass='', parsed=null, pick={row:-1,week:'',on:{}}, flash='', swMsg='確認しています…', undo=null, undoShow=false, sw=null, swiped=0;
+var S=load(), tab='today', curClass='', parsed=null, pick={row:-1,week:'',on:{}}, flash='', swMsg='確認しています…', q='', undo=null, undoShow=false, sw=null, swiped=0;
 
 function clean(o){
   if(!o||typeof o!=='object')return null;
@@ -322,25 +322,51 @@ function vToday(){
   }else h+='<div class="card"><b>'+(today.length?'今日の授業は終わりました。':'今日は授業がありません。')+'</b></div>';
   if(today.length)h+='<h2>今日の授業</h2>'+today.map(function(l){return rowHtml(l)}).join('');
   h+=hotHtml();
-  var fut=S.lessons.filter(function(l){return l.date>t}).sort(byTime).slice(0,40),last='';
-  if(fut.length){h+='<h2>このあとの予定</h2>';fut.forEach(function(l){if(l.date!==last){h+='<p class="sub" style="margin-top:12px">'+jp(l.date)+'</p>';last=l.date}h+=rowHtml(l)})}
+  h+='<h2>このあとの予定（1週間）</h2>';
+  for(var i=1;i<=7;i++){
+    var dd=addDays(t,i),ls=S.lessons.filter(function(l){return l.date===dd}).sort(byTime);
+    h+='<p class="sub" style="margin-top:12px">'+jp(dd)+(i===1?'　明日':i===2?'　あさって':'')+(ls.length?'':'　授業なし')+'</p>'+ls.map(function(l){return rowHtml(l)}).join('');
+  }
   h+='<div class="btns"><button data-act="add">授業を手で追加する</button></div>';
-  var todo=S.lessons.filter(function(l){return !l.done&&l.date<t}).sort(byTime).reverse();
+  var todo=S.lessons.filter(function(l){return !l.done&&l.date<t}).sort(byTime);
   if(todo.length)h+='<h2>未記録の授業（'+todo.length+'）</h2>'+todo.slice(0,30).map(function(l){return rowHtml(l,true)}).join('');
   return h;
+}
+function norm(v){return String(v==null?'':v).normalize('NFKC').toLowerCase()}
+function histHtml(l,withCls){
+  return '<div class="hist" data-open="'+esc(l.id)+'"><div class="h">'+(withCls?esc(l.cls)+'　':'')+jp(l.date)+'　'+l.period+'時間目'+(l.done?'':(isPast(l)?'　<span class="tag todo">未記録</span>':'　<span class="tag">予定</span>'))+'</div>'+(l.content?'<div>'+esc(l.content)+'</div>':'')+(l.absent?'<div class="sub">欠席：'+esc(l.absent)+'</div>':'')+(l.memo?'<div class="sub">メモ：'+esc(l.memo)+'</div>':'')+'</div>';
+}
+function searchHtml(){
+  var k=norm(q).trim();if(!k)return '';
+  var r=S.lessons.filter(function(l){return norm(l.cls+'\n'+l.content+'\n'+l.absent+'\n'+l.memo).indexOf(k)>=0}).sort(byTime);
+  if(!r.length)return '<p class="sub">見つかりませんでした。</p>';
+  return '<p class="sub">'+r.length+'件'+(r.length>60?'（早い順に60件まで）':'')+'</p><div class="card">'+r.slice(0,60).map(function(l){return histHtml(l,true)}).join('')+'</div>';
+}
+function overviewHtml(cs){
+  var h='<h2>進み具合の一覧</h2>';
+  cs.forEach(function(c){
+    var ls=S.lessons.filter(function(l){return l.cls===c}).sort(byTime),done=ls.filter(function(l){return l.done}),last=done[done.length-1];
+    var nx=ls.filter(function(l){return !l.done&&!isPast(l)})[0],todo=ls.filter(function(l){return !l.done&&isPast(l)}).length;
+    var sub=(last?'前回 '+jp(last.date):'')+(nx?(last?'・':'')+'次回 '+jp(nx.date)+' '+nx.period+'限':'');
+    h+='<button class="row" data-cls="'+esc(c)+'"><span class="p" style="width:auto;min-width:44px">'+esc(c)+'<small>記録'+done.length+'回</small></span><span class="b"><b style="display:block;font-size:15px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(last?(last.content||'（内容の記録なし）'):'まだ記録がありません')+'</b><span>'+esc(sub||'予定なし')+'</span></span>'+(todo?'<span class="tag todo">未記録'+todo+'</span>':'')+'</button>';
+  });
+  return h+'<p class="sub">クラスを押すと、そのクラスの記録が開きます。太字は最後に記録した内容です。</p>';
 }
 function vClass(){
   var cs=classes(),h='<h1>クラス別の記録</h1>';
   if(!cs.length)return h+'<div class="card"><p>記録するとクラスごとにここへ並びます。</p></div>';
-  if(cs.indexOf(curClass)<0)curClass=cs[0];
-  h+='<div class="chips">'+cs.map(function(c){return '<button data-cls="'+esc(c)+'" class="'+(c===curClass?'on':'')+'">'+esc(c)+'</button>'}).join('')+'</div>';
+  if(curClass!=='*'&&cs.indexOf(curClass)<0)curClass='*';
+  h+='<div class="chips"><button data-cls="*" class="'+(curClass==='*'?'on':'')+'">一覧</button>'+cs.map(function(c){return '<button data-cls="'+esc(c)+'" class="'+(c===curClass?'on':'')+'">'+esc(c)+'</button>'}).join('')+'</div>';
+  if(curClass==='*'){
+    h+='<label>記録をさがす</label><input id="q" type="search" value="'+esc(q)+'" placeholder="題材・メモ・欠席者などの言葉" autocomplete="off"><div id="qres">'+searchHtml()+'</div>';
+    return h+overviewHtml(cs);
+  }
   var ls=S.lessons.filter(function(l){return l.cls===curClass}).sort(byTime).reverse();
   var past=ls.filter(function(l){return isPast(l)||l.done}),fut=ls.filter(function(l){return !(isPast(l)||l.done)}).reverse();
   if(fut.length)h+='<h2>これからの授業</h2>'+fut.slice(0,6).map(function(l){return rowHtml(l,true)}).join('');
   h+='<h2>これまでの授業（新しい順）</h2><div class="card">';
   if(!past.length)h+='<p class="sub">まだありません。</p>';
-  past.forEach(function(l){h+='<div class="hist" data-open="'+esc(l.id)+'"><div class="h">'+jp(l.date)+'　'+l.period+'時間目'+(l.done?'':'　<span class="tag todo">未記録</span>')+'</div>'+(l.content?'<div>'+esc(l.content)+'</div>':'')+(l.absent?'<div class="sub">欠席：'+esc(l.absent)+'</div>':'')+(l.memo?'<div class="sub">メモ：'+esc(l.memo)+'</div>':'')+'</div>'});
-  h+='</div>';
+  h+=past.map(function(l){return histHtml(l,false)}).join('')+'</div>';
   return h;
 }
 function vImport(){
@@ -375,6 +401,7 @@ function vSet(){
   h+='<p class="sub">学校の時程に合わせて直してください。通知の時刻はここから決まります。</p></div>';
   h+='<h2>通知</h2><div class="card"><label>授業の何分前に知らせるか</label><select id="setBefore">'+[3,5,10,15,20].map(function(m){return '<option'+(m===S.before?' selected':'')+'>'+m+'</option>'}).join('')+'</select><label class="pick" style="border:0"><input type="checkbox" id="setAfter"'+(S.after?' checked':'')+'><span style="color:var(--ink);font-size:16px">授業が終わったら「記録をつける」と知らせる</span></label></div>';
   h+='<h2>オフライン起動</h2><div class="card"><p>'+esc(swMsg)+'</p><p class="sub">「準備できています」と出ていれば、電波がなくてもアイコンから開けます。</p><p class="sub">いま動いているアプリの版：'+VER+'</p><div class="btns"><button data-act="refresh">最新版に入れ直す</button></div><p class="sub">アプリを直したあとは、このボタンで新しい版に入れ替わります。記録は消えません。</p></div>';
+  h+='<h2>まとめの書き出し</h2><div class="card"><p class="sub">授業の記録を、表計算ソフトで開ける形（CSV）で書き出します。クラスごとに、日付の早い順で並びます。</p><div class="grid2"><div><label>ここから</label><input type="date" id="csvFrom"></div><div><label>ここまで</label><input type="date" id="csvTo"></div></div><p class="sub">日付を空けておくと、すべての記録が対象です。欠席者の名前も入るので、送り先に気をつけてください。</p><div class="btns"><button data-act="csv">まとめを書き出す</button></div></div>';
   h+='<h2>バックアップ</h2><div class="card"><p class="sub">記録はこの端末の中だけにあります。機種変更の前や学期末に書き出してください。</p><div class="btns"><button data-act="export">記録を書き出す</button><button data-act="importjson">書き出したファイルを読み込む</button></div><input type="file" id="json" accept="application/json,.json" style="display:none"><div class="btns"><button class="danger" data-act="wipe">すべての記録を消す</button></div></div>';
   return h;
 }
@@ -646,6 +673,17 @@ document.addEventListener('click',function(e){
     navigator.serviceWorker.getRegistration().then(function(r){if(r)r.update()}).catch(function(){});
     ct.postMessage('refresh');return;
   }
+  if(d.act==='csv'){
+    var cf=document.getElementById('csvFrom').value,cto=document.getElementById('csvTo').value;
+    var rows=S.lessons.filter(function(l){return hasRec(l)&&(!cf||l.date>=cf)&&(!cto||l.date<=cto)}).sort(function(x,y){return x.cls===y.cls?byTime(x,y):x.cls.localeCompare(y.cls,'ja',{numeric:true})});
+    if(!rows.length){flash='その期間に記録がありません。';render();return}
+    var Q=String.fromCharCode(34),cell=function(v){v=String(v==null?'':v);if(/^[=+\-@\t\r]/.test(v))v="'"+v;return Q+v.split(Q).join(Q+Q)+Q};
+    var clsCell=function(v){return /^\d+[-\/.]\d+$/.test(v)?Q+'='+Q+Q+v+Q+Q+Q:cell(v)};
+    var out=[['クラス','日付','曜日','時限','内容','欠席','メモ','状態'].map(cell).join(',')].concat(rows.map(function(l){
+      return [clsCell(l.cls),cell(l.date),cell(WD[wdOf(l.date)]),cell(l.period),cell(l.content),cell(l.absent),cell(l.memo),cell(l.done?'記録済':'予定メモ')].join(',');
+    })).join('\r\n');
+    deliver('jugyo-matome.csv','text/csv','\ufeff'+out+'\r\n');return;
+  }
   if(d.act==='addtask'){taskEditor({title:'',due:today(),repeat:'none',remind:3,memo:'',cal:false},true);return}
   if(d.act==='undo'){if(undo){try{S.tasks=JSON.parse(undo)}catch(x){}undo=null;save();flash='元に戻しました。'}render();return}
   if(d.act==='cleartasks'){if(confirmTap(b,'cleartasks','もう一度押すと消えます')){keepUndo();S.tasks=S.tasks.filter(function(t){return !t.done});save();flash='終わったものを消しました。';render()}return}
@@ -661,6 +699,9 @@ document.addEventListener('click',function(e){
   else if(d.act==='export')deliver('jugyo-kiroku-'+ymd(new Date())+'.json','application/json',JSON.stringify(S));
   else if(d.act==='importjson')document.getElementById('json').click();
   else if(d.act==='wipe'){if(confirmTap(b,'wipe','もう一度押すとすべて消えます')){S=JSON.parse(JSON.stringify(DEF));save();flash='すべて消しました。';render()}}
+});
+document.addEventListener('input',function(e){
+  if(e.target.id==='q'){q=e.target.value;var r=document.getElementById('qres');if(r)r.innerHTML=searchHtml()}
 });
 document.addEventListener('change',function(e){
   var t=e.target;
