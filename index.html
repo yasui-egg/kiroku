@@ -247,7 +247,7 @@ if (typeof module !== 'undefined') module.exports = { parseTimetable: parseTimet
 <script>
 (function(){
 'use strict';
-var KEY='jugyo-kiroku-v1', WD='月火水木金土日';
+var VER='2026-11-19a', KEY='jugyo-kiroku-v1', WD='月火水木金土日';
 var DEF={teacher:'',before:10,after:true,
   periods:[['08:50','09:40'],['09:50','10:40'],['10:50','11:40'],['11:50','12:40'],['13:40','14:30'],['14:40','15:30'],['15:40','16:30']],
   lessons:[],tasks:[]};
@@ -324,7 +324,10 @@ function vToday(){
   h+=hotHtml();
   var fut=S.lessons.filter(function(l){return l.date>t}).sort(byTime).slice(0,40),last='';
   if(fut.length){h+='<h2>このあとの予定</h2>';fut.forEach(function(l){if(l.date!==last){h+='<p class="sub" style="margin-top:12px">'+jp(l.date)+'</p>';last=l.date}h+=rowHtml(l)})}
-  return h+'<div class="btns"><button data-act="add">授業を手で追加する</button></div>';
+  h+='<div class="btns"><button data-act="add">授業を手で追加する</button></div>';
+  var todo=S.lessons.filter(function(l){return !l.done&&l.date<t}).sort(byTime).reverse();
+  if(todo.length)h+='<h2>未記録の授業（'+todo.length+'）</h2>'+todo.slice(0,30).map(function(l){return rowHtml(l,true)}).join('');
+  return h;
 }
 function vClass(){
   var cs=classes(),h='<h1>クラス別の記録</h1>';
@@ -371,7 +374,7 @@ function vSet(){
   S.periods.forEach(function(p,i){h+='<div class="grid3"><b>'+(i+1)+'限</b><input type="time" data-pt="'+i+',0" value="'+p[0]+'"><input type="time" data-pt="'+i+',1" value="'+p[1]+'"></div>'});
   h+='<p class="sub">学校の時程に合わせて直してください。通知の時刻はここから決まります。</p></div>';
   h+='<h2>通知</h2><div class="card"><label>授業の何分前に知らせるか</label><select id="setBefore">'+[3,5,10,15,20].map(function(m){return '<option'+(m===S.before?' selected':'')+'>'+m+'</option>'}).join('')+'</select><label class="pick" style="border:0"><input type="checkbox" id="setAfter"'+(S.after?' checked':'')+'><span style="color:var(--ink);font-size:16px">授業が終わったら「記録をつける」と知らせる</span></label></div>';
-  h+='<h2>オフライン起動</h2><div class="card"><p>'+esc(swMsg)+'</p><p class="sub">「準備できています」と出ていれば、電波がなくてもアイコンから開けます。</p></div>';
+  h+='<h2>オフライン起動</h2><div class="card"><p>'+esc(swMsg)+'</p><p class="sub">「準備できています」と出ていれば、電波がなくてもアイコンから開けます。</p><p class="sub">いま動いているアプリの版：'+VER+'</p><div class="btns"><button data-act="refresh">最新版に入れ直す</button></div><p class="sub">アプリを直したあとは、このボタンで新しい版に入れ替わります。記録は消えません。</p></div>';
   h+='<h2>バックアップ</h2><div class="card"><p class="sub">記録はこの端末の中だけにあります。機種変更の前や学期末に書き出してください。</p><div class="btns"><button data-act="export">記録を書き出す</button><button data-act="importjson">書き出したファイルを読み込む</button></div><input type="file" id="json" accept="application/json,.json" style="display:none"><div class="btns"><button class="danger" data-act="wipe">すべての記録を消す</button></div></div>';
   return h;
 }
@@ -636,6 +639,13 @@ document.addEventListener('click',function(e){
   if(d.tdel){delTask(d.tdel);closeSheet();render();return}
   if(d.tdone){tk=findTask(d.tdone);if(tk)doneTask(tk);closeSheet();render();return}
   if(d.tundo){tk=findTask(d.tundo);if(tk){tk.done=false;tk.doneOn='';save();flash='未完了に戻しました。'}closeSheet();render();return}
+  if(d.act==='refresh'){
+    var ct=('serviceWorker' in navigator)&&navigator.serviceWorker.controller;
+    if(!ct){location.reload();return}
+    b.textContent='入れ直しています…';b.disabled=true;
+    navigator.serviceWorker.getRegistration().then(function(r){if(r)r.update()}).catch(function(){});
+    ct.postMessage('refresh');return;
+  }
   if(d.act==='addtask'){taskEditor({title:'',due:today(),repeat:'none',remind:3,memo:'',cal:false},true);return}
   if(d.act==='undo'){if(undo){try{S.tasks=JSON.parse(undo)}catch(x){}undo=null;save();flash='元に戻しました。'}render();return}
   if(d.act==='cleartasks'){if(confirmTap(b,'cleartasks','もう一度押すと消えます')){keepUndo();S.tasks=S.tasks.filter(function(t){return !t.done});save();flash='終わったものを消しました。';render()}return}
@@ -677,6 +687,10 @@ function swCheck(){
     else swSet('準備できています（'+v+'）');
   }).catch(function(e){swSet('できていません（'+(e&&e.name||'')+': '+(e&&e.message||e)+'）')});
 }
+if('serviceWorker' in navigator)navigator.serviceWorker.addEventListener('message',function(e){
+  if(e.data==='refreshed')location.reload();
+  else if(e.data==='refresh-failed'){flash='入れ直せませんでした。電波のある場所でもう一度押してください。';render()}
+});
 swCheck();
 render();
 })();
